@@ -1,0 +1,31 @@
+[project]
+name = "local-transcriber"
+version = "0.1.0"
+description = "Private, local audio and video transcription powered by Whisper"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "openai-whisper>=20250625",
+]
+
+[project.scripts]
+local-transcriber = "local_transcriber.cli:main"
+
+[dependency-groups]
+dev = [
+    "ruff>=0.15.12",
+    "ty>=0.0.32",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.ruff]
+line-length = 88
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.ty.src]
+include = ["local_transcriber", "tests"]

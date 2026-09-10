@@ -1,0 +1,15 @@
+.DS_Store
+.venv/
+__pycache__/
+*.py[cod]
+.ruff_cache/
+.ty_cache/
+dist/
+
+# Inputs and generated transcripts may contain private recordings.
+*.m4a
+*.mp3
+*.mp4
+*.wav
+*.webm
+out/
