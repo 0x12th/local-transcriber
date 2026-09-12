@@ -53,11 +53,42 @@ PYTORCH_ENABLE_MPS_FALLBACK=1 uv run local-transcriber recording.m4a
 
 ## Outputs
 
-By default, files are written to `out/`:
+Each run gets a new directory under `--out-dir` (default: `out/`):
+
+```text
+out/
+  recording/
+    2026-09-12_14-30-05/
+      transcript.md
+      transcript_timestamps.md
+      transcript.json
+```
 
 - `transcript.md` — plain transcript;
 - `transcript_timestamps.md` — transcript with timestamps;
-- `transcript_data.json` — metadata and `start`/`end`/`text` segments.
+- `transcript.json` — metadata, `raw_segments` as returned by Whisper (including
+  confidence metrics), and cleaned `merged_segments` with only `start`/`end`/`text`.
+
+The JSON keys replace the previous `segments` field. Raw segments are retained
+before filtering and merging; metrics are not averaged across merged segments.
+
+The directory uses the input stem and local start time. JSON records `started_at`
+with its UTC offset. Runs starting in the same second get suffixes `-2`, `-3`,
+etc.; directory creation reserves each name exclusively, including concurrent
+runs. Inputs with the same stem share a parent, but never a run directory.
+Previous results are not overwritten; `--overwrite` has been removed.
+
+The run directory is created before loading the model. A failed run may leave
+an empty or incomplete directory; files are written individually, not atomically.
+
+Subtitle/credit filtering is disabled by default. `--drop-subtitle-artifacts`
+enables a keyword heuristic that can also remove legitimate speech mentioning
+subtitles or phrases such as “created by”. `--min-segment-seconds` optionally
+drops short segments; `--merge-gap-seconds` controls merging (default: 1.5).
+
+Explicit `--device cuda` or `--device mps` requires that backend to be available
+in PyTorch; otherwise the CLI reports an error before loading the model. Backend
+availability does not guarantee that every Whisper operation is supported.
 
 `--speaker-count` only records expected speaker count in metadata. With
 `--prompt-speakers`, it is also included as weak prompt context. Whisper does

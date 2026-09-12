@@ -3,7 +3,8 @@ from __future__ import annotations
 import argparse
 import json
 import re
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -51,6 +52,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("input", type=Path, help="Audio or video file to transcribe.")
     parser.add_argument("--out-dir", type=Path, default=DEFAULT_OUT_DIR)
+
     parser.add_argument("--whisper-model", default="turbo")
     parser.add_argument(
         "--language",
@@ -91,8 +93,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--drop-subtitle-artifacts",
         action=argparse.BooleanOptionalAction,
-        default=True,
-        help="Drop obvious subtitle or caption credit artifacts.",
+        default=False,
+        help="Drop subtitle/credit keyword matches; may remove real speech (opt-in).",
     )
     parser.add_argument(
         "--device",
@@ -108,6 +110,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 
 def choose_device(requested: str) -> str:
+    if requested == "cuda" and not torch.cuda.is_available():
+        raise ValueError("CUDA is not available; use --device cpu or --device auto")
+    if requested == "mps" and not torch.backends.mps.is_available():
+        raise ValueError("MPS is not available; use --device cpu or --device auto")
     if requested != "auto":
         return requested
     if torch.cuda.is_available():
@@ -211,6 +217,29 @@ def format_timestamp(seconds: float) -> str:
     return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
 
 
+def output_paths(out_dir: Path) -> tuple[Path, Path, Path]:
+    return (
+        out_dir / "transcript_timestamps.md",
+        out_dir / "transcript.md",
+        out_dir / "transcript.json",
+    )
+
+
+def create_run_directory(out_dir: Path, input_path: Path, started_at: datetime) -> Path:
+    parent = out_dir / input_path.stem
+    parent.mkdir(parents=True, exist_ok=True)
+    name = started_at.strftime("%Y-%m-%d_%H-%M-%S")
+    attempt = 1
+    while True:
+        candidate = parent / (name if attempt == 1 else f"{name}-{attempt}")
+        try:
+            candidate.mkdir(exist_ok=False)
+        except FileExistsError:
+            attempt += 1
+        else:
+            return candidate
+
+
 def write_outputs(
     out_dir: Path,
     input_path: Path,
@@ -219,8 +248,12 @@ def write_outputs(
     args: argparse.Namespace,
     initial_prompt: str | None,
     device: str,
+    started_at: datetime,
 ) -> None:
-    out_dir.mkdir(parents=True, exist_ok=True)
+    paths = output_paths(out_dir)
+    for path in paths:
+        if path.exists() or path.is_symlink():
+            raise FileExistsError(f"output already exists: {path}")
     timestamp_lines = ["# Transcript with Timestamps", ""]
     for segment in segments:
         time_range = (
@@ -235,6 +268,7 @@ def write_outputs(
     transcript_lines = ["# Transcript", "", *(segment.text for segment in segments), ""]
     metadata = {
         "input": str(input_path),
+        "started_at": started_at.isoformat(),
         "language": result.get("language"),
         "requested_language": args.language,
         "whisper_model": args.whisper_model,
@@ -242,26 +276,35 @@ def write_outputs(
         "requested_device": args.device,
         "speaker_count": args.speaker_count,
         "initial_prompt": initial_prompt,
-        "segments": [asdict(segment) for segment in segments],
+        "raw_segments": result["segments"],
+        "merged_segments": [
+            {"start": segment.start, "end": segment.end, "text": segment.text}
+            for segment in segments
+        ],
     }
-    (out_dir / "transcript_timestamps.md").write_text(
-        "\n".join(timestamp_lines), encoding="utf-8"
+    contents = (
+        "\n".join(timestamp_lines),
+        "\n".join(transcript_lines),
+        json.dumps(metadata, ensure_ascii=False, indent=2),
     )
-    (out_dir / "transcript.md").write_text(
-        "\n".join(transcript_lines), encoding="utf-8"
-    )
-    (out_dir / "transcript_data.json").write_text(
-        json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
+    for path, content in zip(paths, contents, strict=True):
+        with path.open("x", encoding="utf-8") as output:
+            output.write(content)
 
 
 def main(argv: list[str] | None = None) -> None:
+    started_at = datetime.now().astimezone()
     args = parse_args(argv)
     input_path = args.input.expanduser().resolve()
     if not input_path.is_file():
         build_parser().error(f"input file not found: {input_path}")
 
-    device = choose_device(args.device)
+    args.out_dir = args.out_dir.expanduser().resolve()
+    try:
+        device = choose_device(args.device)
+        run_dir = create_run_directory(args.out_dir, input_path, started_at)
+    except (OSError, ValueError) as error:
+        build_parser().error(str(error))
     initial_prompt = build_initial_prompt(
         args.initial_prompt, args.speaker_count, args.prompt_speakers
     )
@@ -277,9 +320,20 @@ def main(argv: list[str] | None = None) -> None:
         args.drop_subtitle_artifacts,
     )
     segments = merge_adjacent_segments(segments, args.merge_gap_seconds)
-    write_outputs(
-        args.out_dir, input_path, segments, result, args, initial_prompt, device
-    )
-    print(f"Done: {args.out_dir / 'transcript_timestamps.md'}")
-    print(f"Done: {args.out_dir / 'transcript.md'}")
-    print(f"Data: {args.out_dir / 'transcript_data.json'}")
+    try:
+        write_outputs(
+            run_dir,
+            input_path,
+            segments,
+            result,
+            args,
+            initial_prompt,
+            device,
+            started_at,
+        )
+    except (OSError, ValueError) as error:
+        build_parser().error(str(error))
+    paths = output_paths(run_dir)
+    print(f"Done: {paths[0]}")
+    print(f"Done: {paths[1]}")
+    print(f"Data: {paths[2]}")
