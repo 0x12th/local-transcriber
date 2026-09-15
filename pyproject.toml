@@ -1,12 +1,16 @@
 [project]
 name = "local-transcriber"
 version = "0.1.0"
-description = "Private, local audio and video transcription powered by Whisper"
+description = "Private, local audio and video transcription powered by Whisper or GigaAM"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "openai-whisper>=20250625",
     "torch",
+    "numpy",
+    "onnxruntime>=1.20",
+    "sentencepiece>=0.2",
+    "pyyaml>=6",
 ]
 
 [project.scripts]
