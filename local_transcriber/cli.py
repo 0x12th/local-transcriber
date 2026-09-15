@@ -45,62 +45,37 @@ def non_negative_float(value: str) -> float:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="local-transcriber",
-        description=(
-            "Transcribe audio or video locally with Whisper and write plain text, "
-            "timestamped Markdown, and JSON."
-        ),
+        description="Transcribe audio or video locally with Whisper or GigaAM.",
     )
     parser.add_argument("input", type=Path, help="Audio or video file to transcribe.")
     parser.add_argument("--out-dir", type=Path, default=DEFAULT_OUT_DIR)
-
+    parser.add_argument(
+        "--engine", choices=("whisper", "gigaam"), default="whisper"
+    )
     parser.add_argument("--whisper-model", default="turbo")
+    parser.add_argument("--gigaam-model-dir", type=Path, default=None)
     parser.add_argument(
-        "--language",
-        default=None,
-        help="Language code, for example ru or en. Omit for auto-detection.",
+        "--language", default=None, help="Language code, for example ru or en."
+    )
+    parser.add_argument("--speaker-count", type=positive_int, default=None)
+    parser.add_argument("--initial-prompt", default=None)
+    parser.add_argument("--prompt-speakers", action="store_true")
+    parser.add_argument(
+        "--merge-gap-seconds", type=non_negative_float, default=1.5
     )
     parser.add_argument(
-        "--speaker-count",
-        type=positive_int,
-        default=None,
-        help=(
-            "Expected number of speakers. Stored as metadata; Whisper does not "
-            "diarize speakers."
-        ),
-    )
-    parser.add_argument(
-        "--initial-prompt",
-        default=None,
-        help="Domain terms, names, acronyms, or style hints for Whisper.",
-    )
-    parser.add_argument(
-        "--prompt-speakers",
-        action="store_true",
-        help="Append the expected speaker count to the initial prompt.",
-    )
-    parser.add_argument(
-        "--merge-gap-seconds",
-        type=non_negative_float,
-        default=1.5,
-        help="Merge adjacent segments separated by at most this many seconds.",
-    )
-    parser.add_argument(
-        "--min-segment-seconds",
-        type=non_negative_float,
-        default=0.0,
-        help="Drop shorter segments; useful for noisy recordings.",
+        "--min-segment-seconds", type=non_negative_float, default=0.0
     )
     parser.add_argument(
         "--drop-subtitle-artifacts",
         action=argparse.BooleanOptionalAction,
         default=False,
-        help="Drop subtitle/credit keyword matches; may remove real speech (opt-in).",
     )
     parser.add_argument(
         "--device",
         default="auto",
         choices=("auto", "cpu", "cuda", "mps"),
-        help="Compute device. Auto selects CUDA, then MPS, then CPU.",
+        help="Whisper compute device. GigaAM prototype currently uses CPU ONNX.",
     )
     return parser
 
@@ -128,15 +103,15 @@ def build_initial_prompt(
     speaker_count: int | None,
     prompt_speakers: bool,
 ) -> str | None:
-    prompt_parts = []
+    parts = []
     if initial_prompt:
-        prompt_parts.append(initial_prompt.strip())
+        parts.append(initial_prompt.strip())
     if prompt_speakers and speaker_count is not None:
-        prompt_parts.append(f"The recording contains {speaker_count} speakers.")
-    return " ".join(part for part in prompt_parts if part) or None
+        parts.append(f"The recording contains {speaker_count} speakers.")
+    return " ".join(part for part in parts if part) or None
 
 
-def transcribe(
+def transcribe_whisper(
     input_path: Path,
     model_name: str,
     language: str | None,
@@ -160,7 +135,7 @@ def maybe_float(value: Any) -> float | None:
     return None if value is None else float(value)
 
 
-def build_segments(result: dict[str, Any]) -> list[TranscriptSegment]:
+def build_whisper_segments(result: dict[str, Any]) -> list[TranscriptSegment]:
     segments = []
     for segment in result["segments"]:
         text = str(segment["text"]).strip()
@@ -177,6 +152,26 @@ def build_segments(result: dict[str, Any]) -> list[TranscriptSegment]:
     return segments
 
 
+def transcribe_gigaam(
+    input_path: Path, model_dir: Path | None
+) -> tuple[list[TranscriptSegment], dict[str, Any]]:
+    from local_transcriber.gigaam import GigaAMEngine
+
+    raw = GigaAMEngine(model_dir=model_dir).transcribe(input_path)
+    segments = [
+        TranscriptSegment(start=item.start, end=item.end, text=item.text)
+        for item in raw
+    ]
+    result = {
+        "language": "ru",
+        "segments": [
+            {"start": item.start, "end": item.end, "text": item.text}
+            for item in raw
+        ],
+    }
+    return segments, result
+
+
 def clean_segments(
     segments: list[TranscriptSegment],
     min_segment_seconds: float,
@@ -191,8 +186,7 @@ def clean_segments(
 
 
 def merge_adjacent_segments(
-    segments: list[TranscriptSegment],
-    max_gap_seconds: float,
+    segments: list[TranscriptSegment], max_gap_seconds: float
 ) -> list[TranscriptSegment]:
     if not segments:
         return []
@@ -201,9 +195,7 @@ def merge_adjacent_segments(
         previous = merged[-1]
         if segment.start - previous.end <= max_gap_seconds:
             merged[-1] = TranscriptSegment(
-                previous.start,
-                segment.end,
-                f"{previous.text} {segment.text}",
+                previous.start, segment.end, f"{previous.text} {segment.text}"
             )
         else:
             merged.append(segment)
@@ -225,7 +217,9 @@ def output_paths(out_dir: Path) -> tuple[Path, Path, Path]:
     )
 
 
-def create_run_directory(out_dir: Path, input_path: Path, started_at: datetime) -> Path:
+def create_run_directory(
+    out_dir: Path, input_path: Path, started_at: datetime
+) -> Path:
     parent = out_dir / input_path.stem
     parent.mkdir(parents=True, exist_ok=True)
     name = started_at.strftime("%Y-%m-%d_%H-%M-%S")
@@ -251,35 +245,27 @@ def write_outputs(
     started_at: datetime,
 ) -> None:
     paths = output_paths(out_dir)
-    for path in paths:
-        if path.exists() or path.is_symlink():
-            raise FileExistsError(f"output already exists: {path}")
     timestamp_lines = ["# Transcript with Timestamps", ""]
     for segment in segments:
-        time_range = (
-            f"{format_timestamp(segment.start)}-{format_timestamp(segment.end)}"
-        )
-        timestamp_lines.extend(
-            [
-                f"**{time_range}:** {segment.text}",
-                "",
-            ]
-        )
-    transcript_lines = ["# Transcript", "", *(segment.text for segment in segments), ""]
+        time_range = f"{format_timestamp(segment.start)}-{format_timestamp(segment.end)}"
+        timestamp_lines.extend([f"**{time_range}:** {segment.text}", ""])
+    transcript_lines = ["# Transcript", "", *(s.text for s in segments), ""]
     metadata = {
         "input": str(input_path),
         "started_at": started_at.isoformat(),
+        "engine": args.engine,
         "language": result.get("language"),
         "requested_language": args.language,
-        "whisper_model": args.whisper_model,
+        "whisper_model": args.whisper_model if args.engine == "whisper" else None,
+        "gigaam_model_dir": (
+            str(args.gigaam_model_dir) if args.gigaam_model_dir else None
+        ),
         "device": device,
-        "requested_device": args.device,
         "speaker_count": args.speaker_count,
         "initial_prompt": initial_prompt,
         "raw_segments": result["segments"],
         "merged_segments": [
-            {"start": segment.start, "end": segment.end, "text": segment.text}
-            for segment in segments
+            {"start": s.start, "end": s.end, "text": s.text} for s in segments
         ],
     }
     contents = (
@@ -298,29 +284,33 @@ def main(argv: list[str] | None = None) -> None:
     input_path = args.input.expanduser().resolve()
     if not input_path.is_file():
         build_parser().error(f"input file not found: {input_path}")
-
     args.out_dir = args.out_dir.expanduser().resolve()
-    try:
-        device = choose_device(args.device)
-        run_dir = create_run_directory(args.out_dir, input_path, started_at)
-    except (OSError, ValueError) as error:
-        build_parser().error(str(error))
     initial_prompt = build_initial_prompt(
         args.initial_prompt, args.speaker_count, args.prompt_speakers
     )
-    language_label = args.language or "auto"
-    configuration = f"{args.whisper_model}, {device}, {language_label}"
-    print(f"Transcribing with Whisper ({configuration})...")
-    result = transcribe(
-        input_path, args.whisper_model, args.language, device, initial_prompt
-    )
-    segments = clean_segments(
-        build_segments(result),
-        args.min_segment_seconds,
-        args.drop_subtitle_artifacts,
-    )
-    segments = merge_adjacent_segments(segments, args.merge_gap_seconds)
     try:
+        run_dir = create_run_directory(args.out_dir, input_path, started_at)
+        if args.engine == "gigaam":
+            if args.language not in (None, "ru"):
+                raise ValueError("GigaAM backend currently supports Russian only")
+            device = "cpu"
+            print("Transcribing with GigaAM v3 (ONNX, CPU)...")
+            segments, result = transcribe_gigaam(input_path, args.gigaam_model_dir)
+        else:
+            device = choose_device(args.device)
+            language_label = args.language or "auto"
+            print(
+                f"Transcribing with Whisper ({args.whisper_model}, "
+                f"{device}, {language_label})..."
+            )
+            result = transcribe_whisper(
+                input_path, args.whisper_model, args.language, device, initial_prompt
+            )
+            segments = build_whisper_segments(result)
+        segments = clean_segments(
+            segments, args.min_segment_seconds, args.drop_subtitle_artifacts
+        )
+        segments = merge_adjacent_segments(segments, args.merge_gap_seconds)
         write_outputs(
             run_dir,
             input_path,
@@ -331,7 +321,7 @@ def main(argv: list[str] | None = None) -> None:
             device,
             started_at,
         )
-    except (OSError, ValueError) as error:
+    except (OSError, ValueError, subprocess.SubprocessError) as error:
         build_parser().error(str(error))
     paths = output_paths(run_dir)
     print(f"Done: {paths[0]}")
