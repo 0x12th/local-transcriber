@@ -24,7 +24,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from urllib.request import urlopen
 
-from local_transcriber import model_validation as mv
+from . import validation as mv
 
 WRAPPER = "gigaam-v3-onnx-int8"
 BLOCK_BYTES = 1024 * 1024

@@ -7,8 +7,8 @@ local-transcriber project as a whole.
 
 ## Giga Pisar source code
 
-`local_transcriber/gigaam.py` is adapted from `server/giga_core.py` in Giga
-Pisar at commit
+The modules in `local_transcriber/gigaam/` are adapted from
+`server/giga_core.py` in Giga Pisar at commit
 [`8e5e0bb77b5e63ff27e74a909ee7c7e24afe0fc0`](https://github.com/moznoazachem/giga-pisar/tree/8e5e0bb77b5e63ff27e74a909ee7c7e24afe0fc0).
 The pinned source is licensed under the following terms:
 

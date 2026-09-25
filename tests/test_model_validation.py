@@ -26,8 +26,8 @@ import numpy as np
 import yaml
 
 from local_transcriber import cli
-from local_transcriber import model_validation as mv
 from local_transcriber.gigaam import GigaAMEngine
+from local_transcriber.models import validation as mv
 from local_transcriber.transcript import TranscriptResult
 
 # Independently spelled-out YAML/signatures from the fixed profile contract.
@@ -245,7 +245,7 @@ class TelemetryImportTest(unittest.TestCase):
 import sys, tempfile
 from pathlib import Path
 import yaml
-from local_transcriber import model_validation as mv
+from local_transcriber.models import validation as mv
 from tests.test_model_validation import CONFIG, FakeRuntime, fresh_ort_import
 missing = sys.argv[1] == 'missing'
 runtime = FakeRuntime()

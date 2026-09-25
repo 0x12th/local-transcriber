@@ -6,7 +6,7 @@ import argparse
 import importlib
 from pathlib import Path
 
-from local_transcriber.runtime_policy import disable_ort_telemetry
+from local_transcriber.models.runtime_policy import disable_ort_telemetry
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -39,7 +39,7 @@ def main(argv: list[str] | None = None) -> None:
         disable_ort_telemetry()
         for module in ("numpy", "onnxruntime", "sentencepiece", "yaml"):
             importlib.import_module(module)
-        from local_transcriber import model_installer
+        from local_transcriber.models import installer as model_installer
     except (ImportError, OSError) as error:
         parser.exit(
             1,

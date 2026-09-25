@@ -275,6 +275,18 @@ not label or separate speakers.
 
 ## Development
 
+Internal packages separate inference from model lifecycle:
+
+- `local_transcriber.gigaam`: `audio` handles conversion, WAV reads and chunking;
+  `features` computes log-mel features; `engine` owns inference and decoding.
+  `GigaAMEngine` remains available from `local_transcriber.gigaam`.
+- `local_transcriber.models`: `validation` owns the pinned specification, model
+  identity and shared loader; `installer` handles explicit model setup;
+  `runtime_policy` disables ORT telemetry before import. Importing the package
+  alone does not load its submodules or optional dependencies.
+- `cli` and `models_cli` remain separate entry points. `transcript` and `outputs`
+  remain shared engine-independent modules.
+
 The shared APIs are independent of argparse and ASR imports:
 
 - `local_transcriber.transcript`: `TranscriptResult`, `RunMetadata`,

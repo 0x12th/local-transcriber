@@ -41,8 +41,8 @@ class CliContractTest(unittest.TestCase):
                     "assert args.input == Path('install'); "
                     "assert args.engine == 'whisper'; "
                     "assert not {'torch', 'whisper', 'onnxruntime', 'numpy', 'yaml', "
-                    "'sentencepiece', 'local_transcriber.model_installer', "
-                    "'local_transcriber.model_validation'} & sys.modules.keys(); "
+                    "'sentencepiece', 'local_transcriber.models.installer', "
+                    "'local_transcriber.models.validation'} & sys.modules.keys(); "
                     "cli.main(['--help'])"
                 ),
             ],
@@ -76,7 +76,7 @@ with (
     cli.transcribe_gigaam(Path("audio.wav"), Path("/model"))
 network.assert_not_called()
 assert not {
-    "torch", "whisper", "local_transcriber.model_installer",
+    "torch", "whisper", "local_transcriber.models.installer",
     "local_transcriber.models_cli",
 } & sys.modules.keys()
 """

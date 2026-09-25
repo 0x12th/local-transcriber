@@ -16,9 +16,9 @@ from unittest.mock import patch
 
 import yaml
 
-from local_transcriber import model_installer as mi
-from local_transcriber import model_validation as mv
 from local_transcriber import models_cli
+from local_transcriber.models import installer as mi
+from local_transcriber.models import validation as mv
 from tests.test_model_installer import FakeResponse, archive_bytes, member
 from tests.test_model_validation import CONFIG, FakeRuntime
 
@@ -45,7 +45,7 @@ class Guard(MetaPathFinder):
         if (fullname.split('.')[0] in {
             'torch', 'whisper', 'numpy', 'onnxruntime', 'sentencepiece', 'yaml'
         } or fullname in {
-            'local_transcriber.model_installer', 'local_transcriber.model_validation',
+            'local_transcriber.models.installer', 'local_transcriber.models.validation',
             'local_transcriber.gigaam', 'local_transcriber.cli'
         }):
             raise AssertionError('Unexpected import: ' + fullname)
@@ -54,6 +54,11 @@ def audit(event, args):
     if event.startswith('socket.') or event in {'subprocess.Popen', 'os.system'}:
         raise AssertionError('Unexpected external operation: ' + event)
 sys.addaudithook(audit)
+import local_transcriber.models
+assert not {
+    'local_transcriber.models.validation', 'local_transcriber.models.installer',
+    'local_transcriber.models.runtime_policy',
+} & sys.modules.keys()
 from local_transcriber.models_cli import main
 main(sys.argv[1:])
 """
@@ -84,7 +89,7 @@ main(sys.argv[1:])
 import sys
 from pathlib import Path
 from unittest.mock import patch
-from local_transcriber import model_installer as mi, model_validation as mv
+from local_transcriber.models import installer as mi, validation as mv
 from local_transcriber.models_cli import main
 from tests.test_model_validation import FakeRuntime, fresh_ort_import
 missing = sys.argv[1] == 'missing'
@@ -143,7 +148,8 @@ class Guard(MetaPathFinder):
             raise AssertionError('Unexpected runtime import: ' + fullname)
 sys.meta_path.insert(0, Guard())
 import local_transcriber
-from local_transcriber import cli, model_validation, models_cli
+from local_transcriber import cli, models_cli
+from local_transcriber.models import validation
 for main in (cli.main, models_cli.main):
     try:
         main(['--help'])
@@ -242,7 +248,7 @@ class Guard(MetaPathFinder):
         }):
             raise AssertionError('Unexpected engine import: ' + fullname)
 sys.meta_path.insert(0, Guard())
-from local_transcriber import model_installer as mi, model_validation as mv
+from local_transcriber.models import installer as mi, validation as mv
 from local_transcriber.models_cli import main
 metadata = mv.ModelMetadata(Path('/synthetic-model'), (), 'pinned', False, ())
 with patch.object(mi, 'install_model', return_value=mi.InstallResult(

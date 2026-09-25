@@ -17,13 +17,15 @@ from local_transcriber.gigaam import (
     SAMPLE_RATE,
     Features,
     GigaAMEngine,
+    chunk_bounds,
+    chunk_sample_bounds,
+    find_silences,
+)
+from local_transcriber.gigaam.audio import (
     _duration,
     _read_wav,
     _run_ffmpeg,
     _wav_frame_count,
-    chunk_bounds,
-    chunk_sample_bounds,
-    find_silences,
 )
 
 PROFILE_CONFIG = {
@@ -132,7 +134,7 @@ class AudioToolTest(unittest.TestCase):
     def test_ffmpeg_and_ffprobe_commands_are_explicit(self) -> None:
         completed = subprocess.CompletedProcess([], 0, stdout="1.25\n", stderr="")
         with patch(
-            "local_transcriber.gigaam.subprocess.run", return_value=completed
+            "local_transcriber.gigaam.audio.subprocess.run", return_value=completed
         ) as run:
             _run_ffmpeg("-i", "source.wav", "-ac", "1", "-ar", "16000", "out.wav")
             self.assertEqual(
@@ -156,7 +158,7 @@ class AudioToolTest(unittest.TestCase):
 
         path = Path("converted.wav")
         with patch(
-            "local_transcriber.gigaam.subprocess.run", return_value=completed
+            "local_transcriber.gigaam.audio.subprocess.run", return_value=completed
         ) as run:
             self.assertEqual(_duration(path), 1.25)
             self.assertEqual(run.call_args.args[0][0], "ffprobe")
@@ -166,7 +168,7 @@ class AudioToolTest(unittest.TestCase):
     def test_missing_and_failed_audio_tools_have_actionable_errors(self) -> None:
         with (
             patch(
-                "local_transcriber.gigaam.subprocess.run",
+                "local_transcriber.gigaam.audio.subprocess.run",
                 side_effect=FileNotFoundError,
             ),
             self.assertRaisesRegex(ValueError, "ffmpeg not found"),
@@ -175,7 +177,7 @@ class AudioToolTest(unittest.TestCase):
 
         with (
             patch(
-                "local_transcriber.gigaam.subprocess.run",
+                "local_transcriber.gigaam.audio.subprocess.run",
                 side_effect=FileNotFoundError,
             ),
             self.assertRaisesRegex(ValueError, "ffprobe not found"),
@@ -186,7 +188,7 @@ class AudioToolTest(unittest.TestCase):
             1, ["ffmpeg"], stderr="decoder failed"
         )
         with (
-            patch("local_transcriber.gigaam.subprocess.run", side_effect=failed),
+            patch("local_transcriber.gigaam.audio.subprocess.run", side_effect=failed),
             self.assertRaisesRegex(ValueError, "conversion failed: decoder failed"),
         ):
             _run_ffmpeg("-i", "source.wav", "out.wav")
@@ -196,7 +198,8 @@ class AudioToolTest(unittest.TestCase):
         )
         with (
             patch(
-                "local_transcriber.gigaam.subprocess.run", side_effect=failed_probe
+                "local_transcriber.gigaam.audio.subprocess.run",
+                side_effect=failed_probe,
             ),
             self.assertRaisesRegex(ValueError, "ffprobe failed: invalid media"),
         ):
@@ -205,7 +208,7 @@ class AudioToolTest(unittest.TestCase):
     def test_silencedetect_distinguishes_no_pauses_from_failure(self) -> None:
         no_pauses = subprocess.CompletedProcess([], 0, stdout="", stderr="")
         with patch(
-            "local_transcriber.gigaam.subprocess.run", return_value=no_pauses
+            "local_transcriber.gigaam.audio.subprocess.run", return_value=no_pauses
         ):
             self.assertEqual(find_silences(Path("audio.wav")), [])
 
@@ -219,7 +222,7 @@ class AudioToolTest(unittest.TestCase):
             ),
         )
         with patch(
-            "local_transcriber.gigaam.subprocess.run", return_value=detected
+            "local_transcriber.gigaam.audio.subprocess.run", return_value=detected
         ):
             self.assertEqual(find_silences(Path("audio.wav")), [11.0])
 
@@ -227,7 +230,7 @@ class AudioToolTest(unittest.TestCase):
             1, ["ffmpeg"], stderr="filter unavailable"
         )
         with (
-            patch("local_transcriber.gigaam.subprocess.run", side_effect=failed),
+            patch("local_transcriber.gigaam.audio.subprocess.run", side_effect=failed),
             self.assertRaisesRegex(
                 ValueError, "silencedetect failed: filter unavailable"
             ),
@@ -421,9 +424,9 @@ class BatchTranscriptionTest(unittest.TestCase):
         )
         silence_detector = Mock(return_value=silences)
         with (
-            patch("local_transcriber.gigaam._run_ffmpeg", converter),
-            patch("local_transcriber.gigaam._duration", duration),
-            patch("local_transcriber.gigaam.find_silences", silence_detector),
+            patch("local_transcriber.gigaam.engine._run_ffmpeg", converter),
+            patch("local_transcriber.gigaam.engine._duration", duration),
+            patch("local_transcriber.gigaam.engine.find_silences", silence_detector),
         ):
             segments = engine.transcribe(source)
         return segments, converter, duration, silence_detector
@@ -476,9 +479,16 @@ class BatchTranscriptionTest(unittest.TestCase):
                     write_wav(Path(args[-1]), np.zeros(frames, dtype=np.int16))
 
                 with (
-                    patch("local_transcriber.gigaam._run_ffmpeg", side_effect=convert),
-                    patch("local_transcriber.gigaam._duration", return_value=999.0),
-                    patch("local_transcriber.gigaam.find_silences", return_value=[]),
+                    patch(
+                        "local_transcriber.gigaam.engine._run_ffmpeg",
+                        side_effect=convert,
+                    ),
+                    patch(
+                        "local_transcriber.gigaam.engine._duration", return_value=999.0
+                    ),
+                    patch(
+                        "local_transcriber.gigaam.engine.find_silences", return_value=[]
+                    ),
                 ):
                     result = engine.transcribe_result(self.root / "synthetic.wav")
                 self.assertEqual(result.duration_seconds, total_samples / SAMPLE_RATE)

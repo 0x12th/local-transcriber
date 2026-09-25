@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
-from local_transcriber.runtime_policy import disable_ort_telemetry
+from local_transcriber.models.runtime_policy import disable_ort_telemetry
 
 
 @dataclass(frozen=True)

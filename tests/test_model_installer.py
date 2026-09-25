@@ -19,8 +19,8 @@ from unittest.mock import patch
 
 import yaml
 
-from local_transcriber import model_installer as mi
-from local_transcriber import model_validation as mv
+from local_transcriber.models import installer as mi
+from local_transcriber.models import validation as mv
 from tests.test_model_validation import CONFIG, FakeRuntime
 
 WRAPPER = "gigaam-v3-onnx-int8"
