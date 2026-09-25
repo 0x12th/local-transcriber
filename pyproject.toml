@@ -3,14 +3,24 @@ name = "local-transcriber"
 version = "0.1.0"
 description = "Private, local audio and video transcription powered by Whisper"
 readme = "README.md"
+license-files = ["THIRD_PARTY_NOTICES.md"]
 requires-python = ">=3.12"
 dependencies = [
     "openai-whisper>=20250625",
     "torch",
 ]
 
+[project.optional-dependencies]
+gigaam = [
+    "numpy>=2.0",
+    "onnxruntime==1.30.0",
+    "pyyaml>=6",
+    "sentencepiece>=0.2",
+]
+
 [project.scripts]
 local-transcriber = "local_transcriber.cli:main"
+local-transcriber-model = "local_transcriber.models_cli:main"
 
 [dependency-groups]
 dev = [

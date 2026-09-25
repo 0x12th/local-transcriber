@@ -6,6 +6,10 @@ __pycache__/
 .ty_cache/
 dist/
 
+# Local planning and research notes are not part of the distributable project.
+/.dev/
+/RESEARCH-*.md
+
 # Inputs and generated transcripts may contain private recordings.
 *.m4a
 *.mp3

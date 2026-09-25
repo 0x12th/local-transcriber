@@ -24,6 +24,69 @@ class CliContractTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("local-transcriber", result.stdout)
         self.assertIn("--whisper-model", result.stdout)
+        self.assertIn("--engine {whisper,gigaam}", result.stdout)
+        self.assertIn("--gigaam-model-dir", result.stdout)
+
+    def test_cli_import_does_not_load_engine_dependencies(self) -> None:
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-S",
+                "-c",
+                (
+                    "import sys; from pathlib import Path; "
+                    "import local_transcriber.cli as cli; "
+                    "import local_transcriber.models_cli; "
+                    "args = cli.parse_args(['install']); "
+                    "assert args.input == Path('install'); "
+                    "assert args.engine == 'whisper'; "
+                    "assert not {'torch', 'whisper', 'onnxruntime', 'numpy', 'yaml', "
+                    "'sentencepiece', 'local_transcriber.model_installer', "
+                    "'local_transcriber.model_validation'} & sys.modules.keys(); "
+                    "cli.main(['--help'])"
+                ),
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_gigaam_path_does_not_import_whisper_or_torch(self) -> None:
+        script = """
+import sys
+from pathlib import Path
+from unittest.mock import patch
+
+import local_transcriber.cli as cli
+from local_transcriber.transcript import TranscriptResult
+
+assert not {"torch", "whisper"} & sys.modules.keys()
+with (
+    patch("local_transcriber.gigaam.GigaAMEngine") as engine_type,
+    patch(
+        "socket.create_connection",
+        side_effect=AssertionError("network must not be used"),
+    ) as network,
+):
+    engine_type.return_value.model_dir = Path("/model")
+    engine_type.return_value.transcribe_result.return_value = TranscriptResult(
+        [], "ru", 0.0
+    )
+    cli.transcribe_gigaam(Path("audio.wav"), Path("/model"))
+network.assert_not_called()
+assert not {
+    "torch", "whisper", "local_transcriber.model_installer",
+    "local_transcriber.models_cli",
+} & sys.modules.keys()
+"""
+        result = subprocess.run(
+            [sys.executable, "-c", script],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_rejects_non_positive_speaker_count(self) -> None:
         result = self.run_cli("recording.m4a", "--speaker-count", "0")
@@ -76,6 +139,35 @@ class CliContractTest(unittest.TestCase):
 
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("non-negative number", result.stderr)
+
+    def test_gigaam_rejects_incompatible_options_before_run_directory(self) -> None:
+        cases = [
+            (["--language", "en"], "supports only --language ru"),
+            (["--device", "cuda"], "runs on CPU"),
+            (["--device", "mps"], "runs on CPU"),
+            (["--initial-prompt", "Terms"], "does not support --initial-prompt"),
+            (["--prompt-speakers"], "does not support --initial-prompt"),
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "recording.wav"
+            source.write_bytes(b"not audio: must not reach GigaAM")
+            for index, (options, message) in enumerate(cases):
+                with self.subTest(options=options):
+                    out_dir = root / f"out-{index}"
+                    result = self.run_cli(
+                        str(source),
+                        "--engine",
+                        "gigaam",
+                        "--out-dir",
+                        str(out_dir),
+                        *options,
+                    )
+                    self.assertEqual(result.returncode, 2)
+                    self.assertIn(message, result.stderr)
+                    self.assertNotIn("Traceback", result.stderr)
+                    self.assertNotIn("Transcribing", result.stdout)
+                    self.assertFalse(out_dir.exists())
 
 
 if __name__ == "__main__":
