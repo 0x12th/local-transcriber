@@ -36,6 +36,10 @@ install-gigaam *args:
 transcribe +args:
     env -u VIRTUAL_ENV .venv/bin/local-transcriber "$@"
 
+# Explicitly install the pinned Nemotron 3 model and compatible Metal runtime.
+install-nemotron *args:
+    env -u VIRTUAL_ENV .venv/bin/local-transcriber-model install nemotron "$@"
+
 # Transcribe Russian audio with GigaAM on CPU, without environment/model setup.
 gigaam +args:
     env -u VIRTUAL_ENV .venv/bin/local-transcriber --engine gigaam --language ru --device cpu "$@"

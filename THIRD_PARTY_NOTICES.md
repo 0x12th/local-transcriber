@@ -1,7 +1,7 @@
 # Third-party notices
 
 This file records licenses and provenance for third-party portions used by the
-optional GigaAM backend and its supported model artifact. These notices apply
+optional GigaAM and Nemotron backends and their model artifacts. These notices apply to
 to the corresponding third-party material; they do not relicense the
 local-transcriber project as a whole.
 
@@ -82,3 +82,17 @@ SOFTWARE.
 
 No code from the `giga-pisar-cli` repository is copied into this project. Its
 release is referenced only as the provenance of the pinned model artifact.
+
+## Nemotron speaker diarization (optional)
+
+`just install-nemotron` downloads NVIDIA's
+[`Nemotron-3-Diarization.q8_0.gguf`](https://huggingface.co/nvidia/Nemotron-3-Diarization/blob/f667ed73aee57d40cc39428eb768b4fd87a0a29e/Nemotron-3-Diarization.q8_0.gguf)
+from the pinned model revision and verifies SHA-256
+`08456d9e22cd9a323c0364d98375f3746d6e68507ebb705cd46438c534c7a3a1`.
+The model is distributed under the NVIDIA Open Model License (OpenMDW 1.1); see the linked model page for terms.
+Review its terms before installation or redistribution.
+
+The installer builds [NeMo-Speech.cpp](https://github.com/NVIDIA/NeMo-Speech.cpp)
+from source revision `97a15afa5caa9bce5baaa86c1184103877af4101`, with its
+pinned ggml submodule. Its source is Apache-2.0 and includes additional
+third-party notices. This project does not redistribute the model or runtime.

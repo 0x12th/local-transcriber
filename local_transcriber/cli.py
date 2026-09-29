@@ -76,6 +76,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     parser.add_argument("--whisper-model", default="turbo")
     parser.add_argument(
+        "--diarize", action="store_true",
+        help="Label Whisper speakers using an already installed Nemotron 3 model.",
+    )
+    parser.add_argument(
         "--language",
         default=None,
         help="Language code, for example ru or en. Omit for auto-detection.",
@@ -85,8 +89,8 @@ def build_parser() -> argparse.ArgumentParser:
         type=positive_int,
         default=None,
         help=(
-            "Expected number of speakers. Stored as metadata; Whisper does not "
-            "diarize speakers."
+            "Expected number of speakers. Stored as metadata; does not control "
+            "diarization."
         ),
     )
     parser.add_argument(
@@ -297,12 +301,25 @@ def main(argv: list[str] | None = None) -> None:
         parser.error(f"input file not found: {input_path}")
 
     args.out_dir = args.out_dir.expanduser().resolve()
+    nemotron: tuple[Path, Path] | None = None
     try:
         if args.engine == "gigaam":
+            if args.diarize:
+                raise ValueError("--diarize is supported only with --engine whisper")
             validate_gigaam_options(args)
             device = "cpu"
         else:
             device = choose_device(args.device)
+            if args.diarize:
+                from local_transcriber.models.nemotron import (
+                    NemotronInstallError,
+                    installed_nemotron,
+                )
+
+                try:
+                    nemotron = installed_nemotron()
+                except NemotronInstallError as error:
+                    raise ValueError(f"{error}; run `just install-nemotron`") from error
         run_dir = create_run_directory(args.out_dir, input_path, started_at)
     except (OSError, ValueError) as error:
         parser.error(str(error))
@@ -323,6 +340,50 @@ def main(argv: list[str] | None = None) -> None:
             language_label = args.language or "auto"
             configuration = f"{args.whisper_model}, {device}, {language_label}"
             print(f"Transcribing with Whisper ({configuration})...")
+            if args.diarize:
+                import tempfile
+
+                from local_transcriber import speakers_cli
+
+                with tempfile.TemporaryDirectory(prefix="speaker-audio-") as directory:
+                    wav = Path(directory) / "audio.wav"
+                    duration = speakers_cli._decode(input_path, wav)
+                    result = speakers_cli._transcribe(
+                        wav, args.whisper_model, device, args.language, initial_prompt
+                    )
+                    result["duration_seconds"] = duration
+                    # Keep the shared WAV alive through Nemotron inference below.
+                    raw = TranscriptResult.from_engine_result(result)
+                    view = process_transcript(raw, processing_policy(args))
+                    metadata = run_metadata(
+                        input_path, args, initial_prompt, device, started_at
+                    )
+                    original = serialize_outputs(raw, view, metadata)
+                    assert nemotron is not None
+                    speaker_md, turns_json, diarization_error = (
+                        speakers_cli.diarize_transcript(
+                            wav, duration, raw.raw_segments, *nemotron
+                        )
+                    )
+                    speakers_cli._write_run(run_dir, {
+                        "transcript.md": original.markdown,
+                        "transcript_timestamps.md": original.timestamped_markdown,
+                        "transcript_speakers.md": speaker_md,
+                        "transcript.json": turns_json,
+                    })
+                print(f"Done: {run_dir / 'transcript.md'}")
+                print(f"Done: {run_dir / 'transcript_timestamps.md'}")
+                print(f"Speakers: {run_dir / 'transcript_speakers.md'}")
+                print(f"Data: {run_dir / 'transcript.json'}")
+                if diarization_error is not None:
+                    import sys
+
+                    print(
+                        f"Diarization failed; Whisper transcript retained: "
+                        f"{diarization_error}", file=sys.stderr
+                    )
+                    raise SystemExit(1)
+                return
             result = transcribe(
                 input_path,
                 args.whisper_model,
