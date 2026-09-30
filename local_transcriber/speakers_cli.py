@@ -19,6 +19,7 @@ from local_transcriber.diarization import (
     speaker_markdown,
     speaker_segments,
 )
+from local_transcriber.speaker_postprocessing import postprocess_speakers
 
 
 def _run(command: list[str], timeout: int) -> str:
@@ -117,7 +118,7 @@ def diarize_transcript(
             if not (math.isfinite(item["start"]) and math.isfinite(item["end"])
                     and item["end"] <= duration + 0.05):
                 raise ValueError("Whisper word timestamp exceeds audio duration")
-        groups = speaker_segments(items)
+        groups = postprocess_speakers(speaker_segments(items))
         error_message = None
     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
         error_message = str(error)

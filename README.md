@@ -78,9 +78,14 @@ individual words. Without `--diarize`, neither engine labels speakers. With
 `--diarize`, Whisper keeps the Markdown transcripts, adds
 `transcript_speakers.md`, and writes `transcript.json` as an array of speaker
 turns, each containing only `start`, `end`, `text`, and `speaker` (an integer starting at 1 in order of first
-assigned appearance, or `null` when uncertain). Turns are split at speaker
-changes within Whisper segments; a single voice may have several turns across
-ASR segment boundaries. The plain commands keep their existing JSON schema v1.
+assigned appearance, or `null` when uncertain). After diarization, a deterministic
+cleanup bridges short, continuous same-speaker gaps (`A → null(s) → A`) and very
+short in-sentence label flips (`A → B → A`), then joins adjacent continuous turns
+of the same speaker. It keeps ambiguous overlaps, common English and Russian
+short replies (e.g. `yeah` / `да`) and speaker-change boundaries separate;
+text-case, punctuation and timing heuristics cannot replace
+checking uncertain passages against the audio. The plain commands keep their
+existing JSON schema v1.
 Labels identify voices *within one recording*, not people. Voice attribution
 is an estimate based on time alignment, not verified speech separation. Check
 important passages against the audio. If diarization fails after ASR, the run

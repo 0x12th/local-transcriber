@@ -68,6 +68,53 @@ class SpeakerProcessingTest(unittest.TestCase):
         self.assertEqual([turn["speaker"] for turn in json.loads(payload)],
                          [1, None, 2, None])
 
+    def test_success_reconciles_short_gap_in_both_speaker_outputs(self) -> None:
+        self.segments[0]["words"] = [
+            {"start": 0.0, "end": 0.5, "word": " I think"},
+            {"start": 0.5, "end": 0.75, "word": " that"},
+            {"start": 0.75, "end": 1.2, "word": " works."},
+        ]
+        intervals = [
+            {"index": 0, "start": 0.0, "end": 0.5, "speaker": "speaker_7"},
+            {"index": 1, "start": 0.75, "end": 1.2, "speaker": "speaker_7"},
+        ]
+        with patch.object(speakers_cli, "_diarize", return_value=("", intervals)):
+            markdown, payload, error = speakers_cli.diarize_transcript(
+                self.wav, 2.0, self.segments, self.model, self.executable
+            )
+        self.assertIsNone(error)
+        self.assertEqual(json.loads(payload), [
+            {"start": 0.0, "end": 1.2, "text": "I think that works.", "speaker": 1},
+        ])
+        self.assertIn(
+            "00:00:00.00–00:00:01.20 speaker_7:**  I think that works.",
+            markdown.decode("utf-8"),
+        )
+        self.assertEqual(self.segments[0]["words"][1]["word"], " that")
+
+    def test_russian_short_reply_remains_a_separate_speaker_turn(self) -> None:
+        self.segments[0]["words"] = [
+            {"start": 0.0, "end": 0.5, "word": " Я думаю"},
+            {"start": 0.5, "end": 0.7, "word": " да"},
+            {"start": 0.7, "end": 1.2, "word": " что получится."},
+        ]
+        intervals = [
+            {"index": 0, "start": 0, "end": 0.5, "speaker": "speaker_7"},
+            {"index": 1, "start": 0.5, "end": 0.7, "speaker": "speaker_3"},
+            {"index": 2, "start": 0.7, "end": 1.2, "speaker": "speaker_7"},
+        ]
+        with patch.object(speakers_cli, "_diarize", return_value=("", intervals)):
+            markdown, payload, error = speakers_cli.diarize_transcript(
+                self.wav, 2.0, self.segments, self.model, self.executable
+            )
+        self.assertIsNone(error)
+        self.assertEqual(json.loads(payload), [
+            {"start": 0.0, "end": 0.5, "text": "Я думаю", "speaker": 1},
+            {"start": 0.5, "end": 0.7, "text": "да", "speaker": 2},
+            {"start": 0.7, "end": 1.2, "text": "что получится.", "speaker": 1},
+        ])
+        self.assertIn("speaker_3:**  да", markdown.decode("utf-8"))
+
     def test_failed_diarizer_retains_unlabeled_words(self) -> None:
         with patch.object(
             speakers_cli, "_diarize", side_effect=RuntimeError("offline failure")
