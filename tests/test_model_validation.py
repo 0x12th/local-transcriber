@@ -820,7 +820,7 @@ class ModelValidationTest(unittest.TestCase):
             "ru",
             55.0,
         )
-        for pinned in (False, True):
+        for pinned, debug in ((False, False), (True, True)):
             spec = self.synthetic_spec() if pinned else mv.BUNDLE
             out = self.root / f"output-{pinned}"
             with (
@@ -839,6 +839,7 @@ class ModelValidationTest(unittest.TestCase):
                         "--out-dir",
                         str(out),
                         "--drop-subtitle-artifacts",
+                        *(["--debug"] if debug else []),
                     ]
                 )
                 self.assertEqual(hashes.call_count, 5)
@@ -863,11 +864,19 @@ class ModelValidationTest(unittest.TestCase):
             self.assertEqual(payload["gigaam_profile"], identity["profile"])
             self.assertEqual(payload["gigaam_model_dir"], identity["model_dir"])
             self.assertEqual(payload["artifact_type"], "transcript")
-            self.assertEqual(payload["schema_version"], 1)
-            self.assertEqual(payload["view_raw_indices"], [[1], [3]])
-            self.assertEqual(payload["processing"]["merge_policy"], "none")
+            self.assertEqual(payload["schema_version"], 2)
+            self.assertEqual(payload["segments"], [
+                {"start": 1, "end": 24, "text": "first"},
+                {"start": 25, "end": 49, "text": "second"},
+            ])
             self.assertEqual(payload["duration_seconds"], 55.0)
-            self.assertEqual(payload["raw_segments"], raw.raw_segments)
+            if debug:
+                self.assertEqual(payload["view_raw_indices"], [[1], [3]])
+                self.assertEqual(payload["processing"]["merge_policy"], "none")
+                self.assertEqual(payload["raw_segments"], raw.raw_segments)
+            else:
+                self.assertNotIn("raw_segments", payload)
+                self.assertNotIn("view_raw_indices", payload)
             self.assertEqual(payload["device"], "cpu")
             self.assertEqual(payload["requested_device"], "auto")
 

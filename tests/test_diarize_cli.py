@@ -97,12 +97,19 @@ class DiarizeCliTest(unittest.TestCase):
         self.assertIn(
             "speaker_1:**  Hello", (run / "transcript_speakers.md").read_text()
         )
-        self.assertEqual(json.loads((run / "transcript.json").read_text()), [
+        data = json.loads((run / "transcript.json").read_text())
+        self.assertEqual(data["schema_version"], 2)
+        self.assertEqual(data["engine"], "whisper")
+        self.assertEqual(data["requested_language"], "en")
+        self.assertEqual(data["initial_prompt"], "Terms")
+        self.assertEqual(data["speaker_count"], 5)
+        self.assertEqual(data["diarization_status"], "success")
+        self.assertEqual(data["segments"], [
             {"start": 0.0, "end": 1.0, "text": "Hello", "speaker": 1},
             {"start": 1.0, "end": 2.0, "text": "world!", "speaker": 2},
         ])
-        self.assertEqual(set(json.loads((run / "transcript.json").read_text())[0]),
-                         {"start", "end", "text", "speaker"})
+        self.assertNotIn("raw_segments", data)
+        self.assertNotIn("view_raw_indices", data)
 
     def test_processing_flags_apply_to_plain_markdown(self) -> None:
         code, _, _, _, _, _ = self.invoke("--min-segment-seconds", "1.5")
@@ -124,12 +131,27 @@ class DiarizeCliTest(unittest.TestCase):
         self.assertIn(
             "DIARIZATION FAILED", (run / "transcript_speakers.md").read_text()
         )
-        self.assertEqual(json.loads((run / "transcript.json").read_text()), [
+        data = json.loads((run / "transcript.json").read_text())
+        self.assertEqual(data["diarization_status"], "failed")
+        self.assertEqual(data["segments"], [
             {"start": 0.0, "end": 1.0, "text": "Hello", "speaker": None},
             {"start": 1.0, "end": 2.0, "text": "world!", "speaker": None},
         ])
+        self.assertNotIn("raw_segments", data)
 
-    def test_ordinary_whisper_keeps_legacy_json_and_skips_nemotron(self) -> None:
+    def test_debug_keeps_raw_whisper_data_alongside_speaker_turns(self) -> None:
+        code, _, _, _, _, _ = self.invoke("--debug")
+        self.assertIsNone(code)
+        data = json.loads((self.run_dir() / "transcript.json").read_text())
+        self.assertEqual(data["raw_segments"], self.segments)
+        self.assertEqual(data["merged_segments"], [
+            {"start": 0.0, "end": 2.0, "text": "Hello world!"},
+        ])
+        self.assertEqual(data["view_raw_indices"], [[0, 1]])
+        self.assertEqual(data["processing"]["merge_policy"], "adjacent")
+        self.assertEqual([turn["speaker"] for turn in data["segments"]], [1, 2])
+
+    def test_ordinary_whisper_shares_schema_and_skips_nemotron(self) -> None:
         with (
             patch("local_transcriber.models.nemotron.installed_nemotron") as installed,
             patch.object(speakers_cli, "_decode") as decode,
@@ -148,8 +170,14 @@ class DiarizeCliTest(unittest.TestCase):
         self.assertEqual({path.name for path in run.iterdir()}, {
             "transcript.md", "transcript_timestamps.md", "transcript.json",
         })
-        self.assertEqual(json.loads((run / "transcript.json").read_text())["engine"],
-                         "whisper")
+        data = json.loads((run / "transcript.json").read_text())
+        self.assertEqual(data["engine"], "whisper")
+        self.assertEqual(data["schema_version"], 2)
+        self.assertEqual(data["segments"], [
+            {"start": 0.0, "end": 2.0, "text": "Hello world!"},
+        ])
+        self.assertNotIn("diarization_status", data)
+        self.assertNotIn("speaker", data["segments"][0])
 
     def test_repeated_diarization_never_replaces_previous_output(self) -> None:
         first_code, _, _, _, _, _ = self.invoke()

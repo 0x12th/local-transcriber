@@ -67,31 +67,37 @@ Each run creates a separate directory; previous results are not overwritten:
 out/<recording>/<run>/
   transcript.md              # Plain transcript
   transcript_timestamps.md   # Transcript with timestamps
-  transcript.json            # Ordinary runs: existing metadata and segments
-                             # --diarize: compact speaker-labeled turns
+  transcript.json            # Metadata and compact segments
   transcript_speakers.md     # Only with --diarize: speaker-labeled view
 ```
 
-Ordinary JSON preserves original engine output separately from filtering and
-merging. GigaAM timestamps mark approximate chunks of up to 24 seconds, not
-individual words. Without `--diarize`, neither engine labels speakers. With
-`--diarize`, Whisper keeps the Markdown transcripts, adds
-`transcript_speakers.md`, and writes `transcript.json` as an array of speaker
-turns, each containing only `start`, `end`, `text`, and `speaker` (an integer starting at 1 in order of first
-assigned appearance, or `null` when uncertain). After diarization, a deterministic
-cleanup bridges short, continuous same-speaker gaps (`A → null(s) → A`) and very
-short in-sentence label flips (`A → B → A`), then joins adjacent continuous turns
-of the same speaker. It keeps ambiguous overlaps, common English and Russian
-short replies (e.g. `yeah` / `да`) and speaker-change boundaries separate;
-text-case, punctuation and timing heuristics cannot replace
-checking uncertain passages against the audio. The plain commands keep their
-existing JSON schema v1.
-Labels identify voices *within one recording*, not people. Voice attribution
-is an estimate based on time alignment, not verified speech separation. Check
-important passages against the audio. If diarization fails after ASR, the run
-retains the normal Markdown transcript, writes `null` speakers, marks the
-speaker Markdown as failed and exits nonzero. The compact JSON alone cannot
-distinguish a failed diarization from uncertain speaker assignment.
+`transcript.json` uses schema v2 for Whisper, GigaAM and `--diarize`: an object
+with run metadata (`input`, `started_at`, `engine`, model/language/device settings,
+etc.) and `segments`. Without `--diarize`, segments contain only `start`, `end`
+and `text`; Whisper follows ordinary filtering and merging, while GigaAM keeps
+its approximate chunks of up to 24 seconds. With `--diarize`, Whisper keeps the
+plain Markdown transcripts, adds `transcript_speakers.md`, and emits postprocessed
+speaker turns with an additional `speaker` field. Speaker numbers start at 1 in
+order of first assigned appearance; `null` means diarization could not assign
+that segment.
+`diarization_status` is `success` or `failed` for diarized runs only.
+
+Add `--debug` to any transcription command to also include the previous detailed
+fields in the same JSON: `raw_segments` (including engine-specific metrics),
+`merged_segments`, `processing`, and `view_raw_indices`. These debug indices
+refer to the ordinary ASR view, not speaker turns. Existing run files are not
+rewritten; readers of previous schema v1 objects or diarized JSON arrays must
+handle both formats if they load old recordings.
+
+After diarization, deterministic cleanup bridges short, continuous same-speaker
+gaps (`A → null(s) → A`) and very short in-sentence label flips (`A → B → A`),
+then joins adjacent continuous turns of the same speaker. It keeps ambiguous
+overlaps, common English and Russian short replies (e.g. `yeah` / `да`) and
+speaker-change boundaries separate; text-case, punctuation and timing heuristics
+cannot replace checking uncertain passages against the audio. Labels identify
+voices *within one recording*, not people. If diarization fails after ASR, the
+run retains the normal Markdown transcript, marks the speaker Markdown and JSON
+status as failed, writes `null` speakers and exits nonzero.
 
 ## Useful options
 
@@ -101,6 +107,9 @@ just transcribe "recording.m4a" --whisper-model small --language ru
 
 # Choose the output directory
 just gigaam "recording.m4a" --out-dir "transcripts"
+
+# Include RAW engine data and processing provenance in transcript.json
+just transcribe "recording.m4a" --diarize --debug
 
 # See all CLI options
 just transcribe --help

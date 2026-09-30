@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import subprocess
 from datetime import datetime
 from pathlib import Path
@@ -61,6 +62,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("input", type=Path, help="Audio or video file to transcribe.")
     parser.add_argument("--out-dir", type=Path, default=DEFAULT_OUT_DIR)
+    parser.add_argument(
+        "--debug", action="store_true",
+        help="Include RAW engine segments and processing details in transcript.json.",
+    )
     parser.add_argument(
         "--engine",
         choices=("whisper", "gigaam"),
@@ -289,7 +294,9 @@ def write_outputs(
         gigaam_profile,
         result.get("model_identity"),
     )
-    write_serialized_outputs(out_dir, serialize_outputs(raw, view, metadata))
+    write_serialized_outputs(
+        out_dir, serialize_outputs(raw, view, metadata, debug=args.debug)
+    )
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -358,18 +365,24 @@ def main(argv: list[str] | None = None) -> None:
                     metadata = run_metadata(
                         input_path, args, initial_prompt, device, started_at
                     )
-                    original = serialize_outputs(raw, view, metadata)
                     assert nemotron is not None
                     speaker_md, turns_json, diarization_error = (
                         speakers_cli.diarize_transcript(
                             wav, duration, raw.raw_segments, *nemotron
                         )
                     )
+                    original = serialize_outputs(
+                        raw, view, metadata, speaker_turns=json.loads(turns_json),
+                        debug=args.debug,
+                        diarization_status=(
+                            "failed" if diarization_error is not None else "success"
+                        ),
+                    )
                     speakers_cli._write_run(run_dir, {
                         "transcript.md": original.markdown,
                         "transcript_timestamps.md": original.timestamped_markdown,
                         "transcript_speakers.md": speaker_md,
-                        "transcript.json": turns_json,
+                        "transcript.json": original.transcript_json,
                     })
                 print(f"Done: {run_dir / 'transcript.md'}")
                 print(f"Done: {run_dir / 'transcript_timestamps.md'}")
@@ -404,7 +417,9 @@ def main(argv: list[str] | None = None) -> None:
             gigaam_profile,
             result.get("model_identity"),
         )
-        write_serialized_outputs(run_dir, serialize_outputs(raw, view, metadata))
+        write_serialized_outputs(
+            run_dir, serialize_outputs(raw, view, metadata, debug=args.debug)
+        )
     except (OSError, ValueError, subprocess.SubprocessError) as error:
         parser.error(str(error))
 

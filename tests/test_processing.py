@@ -174,7 +174,7 @@ class OutputTest(unittest.TestCase):
         )
         return run_dir
 
-    def test_outputs_keep_raw_metrics_and_only_text_ranges_for_merged(self) -> None:
+    def test_outputs_keep_run_metadata_and_compact_segments_by_default(self) -> None:
         run_dir = self.write()
         self.assertEqual(run_dir, self.out / "meeting" / "2026-09-12_14-30-05")
         data = json.loads((run_dir / "transcript.json").read_text())
@@ -182,25 +182,17 @@ class OutputTest(unittest.TestCase):
         self.assertEqual(data["engine"], "whisper")
         self.assertEqual(data["timestamp_kind"], "segment")
         self.assertEqual(data["requested_device"], "auto")
-        self.assertEqual(data["raw_segments"], self.result["segments"])
         self.assertEqual(data["artifact_type"], "transcript")
-        self.assertEqual(data["schema_version"], 1)
-        self.assertEqual(data["view_raw_indices"], [[0, 1]])
-        self.assertEqual(
-            data["processing"],
-            {
-                "min_segment_seconds": 0.0,
-                "drop_subtitle_artifacts": True,
-                "merge_gap_seconds": 1.5,
-                "merge_policy": "adjacent",
-            },
-        )
+        self.assertEqual(data["schema_version"], 2)
+        self.assertEqual(data["segments"], [
+            {"start": 0, "end": 2, "text": "Привет мир"},
+        ])
+        for key in (
+            "raw_segments", "merged_segments", "view_raw_indices", "processing"
+        ):
+            self.assertNotIn(key, data)
         self.assertNotIn("duration_seconds", data)
         self.assertNotIn("model_identity", data)
-        self.assertEqual(
-            data["merged_segments"], [{"start": 0, "end": 2, "text": "Привет мир"}]
-        )
-        self.assertNotIn("segments", data)
         self.assertEqual(data["language"], "ru")
         self.assertEqual(
             (run_dir / "transcript.md").read_text(), "# Transcript\n\nПривет мир\n"
@@ -209,6 +201,24 @@ class OutputTest(unittest.TestCase):
             "**00:00:00-00:00:02:** Привет мир",
             (run_dir / "transcript_timestamps.md").read_text(),
         )
+
+    def test_debug_keeps_raw_metrics_and_view_provenance(self) -> None:
+        self.args.debug = True
+        data = json.loads((self.write() / "transcript.json").read_text())
+        self.assertEqual(data["raw_segments"], self.result["segments"])
+        self.assertEqual(data["merged_segments"], [
+            {"start": 0, "end": 2, "text": "Привет мир"},
+        ])
+        self.assertEqual(data["view_raw_indices"], [[0, 1]])
+        self.assertEqual(data["processing"], {
+            "min_segment_seconds": 0.0,
+            "drop_subtitle_artifacts": True,
+            "merge_gap_seconds": 1.5,
+            "merge_policy": "adjacent",
+        })
+        self.assertEqual(data["segments"], [
+            {"start": 0, "end": 2, "text": "Привет мир"},
+        ])
 
     def test_legacy_writer_rejects_inconsistent_processing_instead_of_guessing(self):
         self.args.drop_subtitle_artifacts = False
@@ -355,12 +365,13 @@ class EngineDispatchTest(unittest.TestCase):
         self.assertEqual(data["engine"], "whisper")
         self.assertEqual(data["timestamp_kind"], "segment")
         self.assertEqual(data["requested_device"], "cpu")
-        self.assertEqual(data["raw_segments"], result["segments"])
-        self.assertEqual(data["raw_segments"][0]["avg_logprob"], -0.2)
-        self.assertEqual(data["schema_version"], 1)
-        self.assertEqual(data["view_raw_indices"], [[0]])
-        self.assertEqual(data["processing"]["merge_policy"], "adjacent")
-        self.assertFalse(data["processing"]["drop_subtitle_artifacts"])
+        self.assertEqual(data["segments"], [
+            {"start": 0, "end": 1, "text": "hello"},
+        ])
+        self.assertEqual(data["schema_version"], 2)
+        self.assertNotIn("raw_segments", data)
+        self.assertNotIn("view_raw_indices", data)
+        self.assertNotIn("processing", data)
         self.assertNotIn("duration_seconds", data)
         self.assertNotIn("model_identity", data)
         whisper.assert_called_once_with(
@@ -429,15 +440,15 @@ class EngineDispatchTest(unittest.TestCase):
         self.assertEqual(data["device"], "cpu")
         self.assertEqual(data["requested_device"], "auto")
         self.assertEqual(data["speaker_count"], 2)
-        self.assertEqual(data["raw_segments"], raw_segments)
-        self.assertEqual(data["merged_segments"], raw_segments[:2])
+        self.assertEqual(data["segments"], [
+            {"start": 0.0, "end": 24.0, "text": "first"},
+            {"start": 24.0, "end": 48.0, "text": "second"},
+        ])
+        self.assertNotIn("raw_segments", data)
+        self.assertNotIn("view_raw_indices", data)
         self.assertEqual(data["artifact_type"], "transcript")
-        self.assertEqual(data["schema_version"], 1)
+        self.assertEqual(data["schema_version"], 2)
         self.assertEqual(data["duration_seconds"], 55.0)
-        self.assertEqual(data["view_raw_indices"], [[0], [1]])
-        self.assertEqual(data["processing"]["merge_policy"], "none")
-        self.assertEqual(data["processing"]["merge_gap_seconds"], 0.0)
-        self.assertTrue(data["processing"]["drop_subtitle_artifacts"])
         self.assertNotIn("model_identity", data)
         self.assertEqual(data["gigaam_profile"], "v3_e2e_rnnt")
         self.assertEqual(data["gigaam_model_dir"], str(actual_model_dir))

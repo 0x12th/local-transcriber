@@ -7,6 +7,7 @@ import math
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 from local_transcriber.transcript import RunMetadata, TranscriptResult, TranscriptView
 
@@ -49,9 +50,15 @@ def create_run_directory(out_dir: Path, input_path: Path, started_at: datetime) 
 
 
 def serialize_transcript(
-    result: TranscriptResult, view: TranscriptView, metadata: RunMetadata
+    result: TranscriptResult,
+    view: TranscriptView,
+    metadata: RunMetadata,
+    *,
+    speaker_turns: list[dict[str, Any]] | None = None,
+    debug: bool = False,
+    diarization_status: str | None = None,
 ) -> bytes:
-    """Return the exact UTF-8 JSON bytes to publish (and, later, hash)."""
+    """Serialize one JSON schema for ordinary and speaker-labeled transcripts."""
     expected_merge = "none" if metadata.engine == "gigaam" else "adjacent"
     if view.processing.merge_policy != expected_merge:
         raise ValueError(f"{metadata.engine} requires merge_policy={expected_merge}")
@@ -85,25 +92,46 @@ def serialize_transcript(
         "timestamp_kind": "chunk" if metadata.engine == "gigaam" else "segment",
         "speaker_count": metadata.speaker_count,
         "initial_prompt": metadata.initial_prompt,
-        "raw_segments": result.raw_segments,
-        "merged_segments": [
-            {"start": segment.start, "end": segment.end, "text": segment.text}
-            for segment in view.segments
-        ],
+        "segments": (
+            [
+                {"start": segment.start, "end": segment.end, "text": segment.text}
+                for segment in view.segments
+            ]
+            if speaker_turns is None else [
+                {key: turn[key] for key in ("start", "end", "text", "speaker")}
+                for turn in speaker_turns
+            ]
+        ),
         "artifact_type": "transcript",
-        "schema_version": 1,
-        "processing": asdict(view.processing),
-        "view_raw_indices": view.view_raw_indices,
+        "schema_version": 2,
     }
     if result.duration_seconds is not None:
         payload["duration_seconds"] = result.duration_seconds
     if metadata.model_identity is not None:
         payload["model_identity"] = metadata.model_identity
+    if diarization_status is not None:
+        payload["diarization_status"] = diarization_status
+    if debug:
+        payload.update({
+            "raw_segments": result.raw_segments,
+            "merged_segments": [
+                {"start": segment.start, "end": segment.end, "text": segment.text}
+                for segment in view.segments
+            ],
+            "processing": asdict(view.processing),
+            "view_raw_indices": view.view_raw_indices,
+        })
     return json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8")
 
 
 def serialize_outputs(
-    result: TranscriptResult, view: TranscriptView, metadata: RunMetadata
+    result: TranscriptResult,
+    view: TranscriptView,
+    metadata: RunMetadata,
+    *,
+    speaker_turns: list[dict[str, Any]] | None = None,
+    debug: bool = False,
+    diarization_status: str | None = None,
 ) -> SerializedOutputs:
     timestamp_lines = ["# Transcript with Timestamps", ""]
     for segment in view.segments:
@@ -120,7 +148,10 @@ def serialize_outputs(
     return SerializedOutputs(
         timestamped_markdown="\n".join(timestamp_lines).encode("utf-8"),
         markdown="\n".join(transcript_lines).encode("utf-8"),
-        transcript_json=serialize_transcript(result, view, metadata),
+        transcript_json=serialize_transcript(
+            result, view, metadata, speaker_turns=speaker_turns,
+            debug=debug, diarization_status=diarization_status,
+        ),
     )
 
 

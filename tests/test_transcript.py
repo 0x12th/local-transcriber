@@ -144,25 +144,20 @@ class SerializationTest(unittest.TestCase):
         self.view = process_transcript(self.result, self.policy)
         self.metadata = metadata_fixture()
 
-    def test_schema_v1_preserves_all_raw_fields_and_old_metadata(self) -> None:
+    def test_default_schema_v2_has_compact_segments_without_speaker(self) -> None:
         data = json.loads(
             outputs.serialize_transcript(self.result, self.view, self.metadata)
         )
-        self.assertEqual(data["raw_segments"], raw_fixture())
         self.assertEqual(data["artifact_type"], "transcript")
-        self.assertEqual(data["schema_version"], 1)
-        self.assertEqual(data["view_raw_indices"], [[1, 4, 5], [6]])
-        self.assertEqual(
-            data["processing"],
-            {
-                "min_segment_seconds": 1.0,
-                "drop_subtitle_artifacts": True,
-                "merge_gap_seconds": 2.0,
-                "merge_policy": "adjacent",
-            },
-        )
-        for segment in data["merged_segments"]:
-            self.assertEqual(set(segment), {"start", "end", "text"})
+        self.assertEqual(data["schema_version"], 2)
+        self.assertEqual(data["segments"], [
+            {"start": 1, "end": 6, "text": "same same same"},
+            {"start": 10, "end": 11, "text": "last"},
+        ])
+        for key in (
+            "raw_segments", "merged_segments", "view_raw_indices", "processing"
+        ):
+            self.assertNotIn(key, data)
         self.assertEqual(data["requested_device"], "auto")
         self.assertEqual(data["device"], "cpu")
         self.assertEqual(data["whisper_model"], "turbo")
@@ -174,6 +169,41 @@ class SerializationTest(unittest.TestCase):
         self.assertNotIn("model_identity", data)
         self.assertNotIn("source_raw_sha256", data)
         self.assertNotIn("glossary", data)
+
+    def test_debug_adds_exact_raw_segments_and_processing_provenance(self) -> None:
+        data = json.loads(outputs.serialize_transcript(
+            self.result, self.view, self.metadata, debug=True
+        ))
+        self.assertEqual(data["raw_segments"], raw_fixture())
+        self.assertEqual(data["view_raw_indices"], [[1, 4, 5], [6]])
+        self.assertEqual(data["merged_segments"], [
+            {"start": 1, "end": 6, "text": "same same same"},
+            {"start": 10, "end": 11, "text": "last"},
+        ])
+        self.assertEqual(data["processing"], {
+            "min_segment_seconds": 1.0,
+            "drop_subtitle_artifacts": True,
+            "merge_gap_seconds": 2.0,
+            "merge_policy": "adjacent",
+        })
+        self.assertEqual(data["schema_version"], 2)
+        self.assertTrue(all("speaker" not in part for part in data["segments"]))
+
+    def test_diarized_turns_share_schema_without_changing_raw_view(self) -> None:
+        turns = [
+            {"start": 1, "end": 2, "text": "same", "speaker": 1},
+            {"start": 2, "end": 3, "text": "yes", "speaker": 2},
+        ]
+        before = deepcopy(turns)
+        data = json.loads(outputs.serialize_transcript(
+            self.result, self.view, self.metadata, speaker_turns=turns,
+            diarization_status="success", debug=True,
+        ))
+        self.assertEqual(data["segments"], before)
+        self.assertEqual(data["diarization_status"], "success")
+        self.assertEqual(data["raw_segments"], raw_fixture())
+        self.assertEqual(data["view_raw_indices"], [[1, 4, 5], [6]])
+        self.assertEqual(turns, before)
 
     def test_explicit_model_identity_is_copied_not_inferred_or_mutated(self) -> None:
         identity = {"verification": "unverified", "files": {"synthetic": "digest"}}
@@ -204,7 +234,13 @@ class SerializationTest(unittest.TestCase):
         result = replace(self.result, duration_seconds=12.5)
         data = json.loads(outputs.serialize_transcript(result, view, metadata))
         self.assertEqual(data["duration_seconds"], 12.5)
-        self.assertEqual(data["view_raw_indices"], [[1], [4], [5], [6]])
+        self.assertEqual(data["segments"], [
+            {"start": 1, "end": 2, "text": "same"},
+            {"start": 4, "end": 5, "text": "same"},
+            {"start": 5, "end": 6, "text": "same"},
+            {"start": 10, "end": 11, "text": "last"},
+        ])
+        self.assertNotIn("view_raw_indices", data)
         self.assertEqual(data["timestamp_kind"], "chunk")
         self.assertNotIn("model_identity", data)
         with self.assertRaisesRegex(ValueError, "merge_policy=none"):
@@ -219,9 +255,9 @@ class SerializationTest(unittest.TestCase):
                 serialized = outputs.serialize_outputs(result, view, metadata)
                 data = json.loads(serialized.transcript_json)
                 self.assertEqual(data["duration_seconds"], duration)
-                self.assertEqual(data["raw_segments"], [])
-                self.assertEqual(data["merged_segments"], [])
-                self.assertEqual(data["view_raw_indices"], [])
+                self.assertEqual(data["segments"], [])
+                self.assertNotIn("raw_segments", data)
+                self.assertNotIn("view_raw_indices", data)
                 self.assertEqual(serialized.markdown, b"# Transcript\n\n")
                 self.assertEqual(
                     serialized.timestamped_markdown, b"# Transcript with Timestamps\n"
@@ -234,7 +270,10 @@ class SerializationTest(unittest.TestCase):
             serialized = outputs.serialize_outputs(
                 self.result, self.view, self.metadata
             )
-        spy.assert_called_once_with(self.result, self.view, self.metadata)
+        spy.assert_called_once_with(
+            self.result, self.view, self.metadata,
+            speaker_turns=None, debug=False, diarization_status=None,
+        )
         with (
             tempfile.TemporaryDirectory() as directory,
             patch.object(
